@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m venv venv)",
+      "Bash(venv/Scripts/pip.exe install:*)",
+      "Bash(mkdir -p E:/VLM-Drone/.claude/memory)",
+      "Bash(cp -r \"C:/Users/Arifin Rafi/.claude/projects/E--VLM-Drone/memory/\"* E:/VLM-Drone/.claude/memory/)",
+      "Bash(cp \"C:/Users/Arifin Rafi/.claude/plans/noble-leaping-planet.md\" E:/VLM-Drone/.claude/plan.md)"
+    ]
+  }
+}
