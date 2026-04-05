@@ -14,32 +14,7 @@ class MAVLinkComm:
         self._lock = threading.Lock()
         self.target_system = 1
         self.target_component = 1
-
-    def connect(self, connection_string="udp:127.0.0.1:14550"):
-        """Establish MAVLink connection."""
-        try:
-            self.connection = mavutil.mavlink_connection(connection_string)
-            self.connection.wait_heartbeat(timeout=10)
-            self.target_system = self.connection.target_system
-            self.target_component = self.connection.target_component
-            self.connected = True
-            return True
-        except Exception as e:
-            self.connected = False
-            raise ConnectionError(f"Failed to connect: {e}")
-
-    def disconnect(self):
-        """Close the MAVLink connection."""
-        if self.connection:
-            self.connection.close()
-        self.connected = False
-
-    def get_telemetry(self):
-        """Poll and return latest telemetry data."""
-        if not self.connected:
-            return None
-
-        data = {
+        self._telemetry = {
             "altitude": 0.0,
             "groundspeed": 0.0,
             "airspeed": 0.0,
@@ -57,8 +32,53 @@ class MAVLinkComm:
             "armed": False,
         }
 
+    def connect(self, connection_string="udp:127.0.0.1:14550"):
+        """Establish MAVLink connection."""
+        try:
+            self.connection = mavutil.mavlink_connection(connection_string)
+            self.connection.wait_heartbeat(timeout=10)
+            self.target_system = self.connection.target_system
+            self.target_component = self.connection.target_component
+            self._request_data_streams()
+            self.connected = True
+            return True
+        except Exception as e:
+            self.connected = False
+            raise ConnectionError(f"Failed to connect: {e}")
+
+    def _request_data_streams(self):
+        """Ask ArduPilot to send all telemetry streams."""
+        streams = [
+            (mavutil.mavlink.MAV_DATA_STREAM_RAW_SENSORS, 2),
+            (mavutil.mavlink.MAV_DATA_STREAM_EXTENDED_STATUS, 2),
+            (mavutil.mavlink.MAV_DATA_STREAM_RC_CHANNELS, 2),
+            (mavutil.mavlink.MAV_DATA_STREAM_POSITION, 5),
+            (mavutil.mavlink.MAV_DATA_STREAM_EXTRA1, 10),
+            (mavutil.mavlink.MAV_DATA_STREAM_EXTRA2, 5),
+            (mavutil.mavlink.MAV_DATA_STREAM_EXTRA3, 2),
+        ]
+        for stream_id, rate in streams:
+            self.connection.mav.request_data_stream_send(
+                self.target_system,
+                self.target_component,
+                stream_id,
+                rate,
+                1  # start
+            )
+
+    def disconnect(self):
+        """Close the MAVLink connection."""
+        if self.connection:
+            self.connection.close()
+        self.connected = False
+
+    def get_telemetry(self):
+        """Poll and return latest telemetry data."""
+        if not self.connected:
+            return None
+
         with self._lock:
-            # Read all available messages
+            # Read all available messages, updating persistent state
             while True:
                 msg = self.connection.recv_match(blocking=False)
                 if msg is None:
@@ -66,34 +86,34 @@ class MAVLinkComm:
                 msg_type = msg.get_type()
 
                 if msg_type == "HEARTBEAT":
-                    data["mode"] = mavutil.mode_string_v10(msg)
-                    data["armed"] = (msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED) != 0
+                    self._telemetry["mode"] = mavutil.mode_string_v10(msg)
+                    self._telemetry["armed"] = (msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED) != 0
 
                 elif msg_type == "GLOBAL_POSITION_INT":
-                    data["altitude"] = msg.relative_alt / 1000.0
-                    data["lat"] = msg.lat / 1e7
-                    data["lon"] = msg.lon / 1e7
+                    self._telemetry["altitude"] = msg.relative_alt / 1000.0
+                    self._telemetry["lat"] = msg.lat / 1e7
+                    self._telemetry["lon"] = msg.lon / 1e7
 
                 elif msg_type == "VFR_HUD":
-                    data["groundspeed"] = msg.groundspeed
-                    data["airspeed"] = msg.airspeed
-                    data["heading"] = msg.heading
-                    data["altitude"] = msg.alt
+                    self._telemetry["groundspeed"] = msg.groundspeed
+                    self._telemetry["airspeed"] = msg.airspeed
+                    self._telemetry["heading"] = msg.heading
+                    self._telemetry["altitude"] = msg.alt
 
                 elif msg_type == "SYS_STATUS":
-                    data["battery_voltage"] = msg.voltage_battery / 1000.0
-                    data["battery_remaining"] = msg.battery_remaining
+                    self._telemetry["battery_voltage"] = msg.voltage_battery / 1000.0
+                    self._telemetry["battery_remaining"] = msg.battery_remaining
 
                 elif msg_type == "ATTITUDE":
-                    data["roll"] = msg.roll
-                    data["pitch"] = msg.pitch
-                    data["yaw"] = msg.yaw
+                    self._telemetry["roll"] = msg.roll
+                    self._telemetry["pitch"] = msg.pitch
+                    self._telemetry["yaw"] = msg.yaw
 
                 elif msg_type == "GPS_RAW_INT":
-                    data["gps_fix"] = msg.fix_type
-                    data["gps_satellites"] = msg.satellites_visible
+                    self._telemetry["gps_fix"] = msg.fix_type
+                    self._telemetry["gps_satellites"] = msg.satellites_visible
 
-        return data
+        return dict(self._telemetry)
 
     def send_manual_control(self, x=0, y=0, z=500, r=0):
         """Send MANUAL_CONTROL message.

@@ -1,11 +1,36 @@
-"""Manual control panel with keyboard controls and speed input."""
+"""Manual control panel with keyboard controls, connection settings, and avoidance config."""
 
+import os
+import json
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-    QGroupBox, QSpinBox, QPushButton, QLineEdit, QComboBox
+    QGroupBox, QSpinBox, QPushButton, QLineEdit, QComboBox,
+    QRadioButton, QStackedWidget, QButtonGroup
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
+
+
+# Config file path (project root)
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "app_config.json")
+
+
+def _load_config():
+    try:
+        with open(_CONFIG_PATH, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_config(data):
+    try:
+        existing = _load_config()
+        existing.update(data)
+        with open(_CONFIG_PATH, "w") as f:
+            json.dump(existing, f, indent=2)
+    except Exception as e:
+        print(f"[CONFIG] Failed to save: {e}")
 
 
 class ControlPanel(QWidget):
@@ -17,7 +42,9 @@ class ControlPanel(QWidget):
     disarm_requested = pyqtSignal()
     mode_change_requested = pyqtSignal(str)
     avoidance_toggled = pyqtSignal(bool)
+    avoidance_mode_changed = pyqtSignal(str)  # "auto" or "gpt"
     camera_changed = pyqtSignal(int)  # camera device id
+    api_key_saved = pyqtSignal(str)  # API key value
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -40,29 +67,92 @@ class ControlPanel(QWidget):
         cam_layout.addWidget(self._cam_combo)
         layout.addWidget(cam_group)
 
-        # Connection group
+        # ── Connection group ──────────────────────────────────
         conn_group = QGroupBox("Connection")
         conn_group.setStyleSheet(self._group_style())
-        conn_layout = QHBoxLayout(conn_group)
+        conn_main = QVBoxLayout(conn_group)
 
-        self._conn_input = QLineEdit("udp:127.0.0.1:14550")
-        self._conn_input.setStyleSheet("background: #2a2a2a; color: #eee; border: 1px solid #555; padding: 4px;")
-        conn_layout.addWidget(self._conn_input)
+        # Radio buttons: Serial / UDP
+        radio_row = QHBoxLayout()
+        self._serial_radio = QRadioButton("Serial")
+        self._udp_radio = QRadioButton("UDP")
+        self._serial_radio.setStyleSheet("color: #eee;")
+        self._udp_radio.setStyleSheet("color: #eee;")
+        self._udp_radio.setChecked(True)
+        radio_group = QButtonGroup(self)
+        radio_group.addButton(self._serial_radio)
+        radio_group.addButton(self._udp_radio)
+        radio_row.addWidget(self._serial_radio)
+        radio_row.addWidget(self._udp_radio)
+        radio_row.addStretch()
+        conn_main.addLayout(radio_row)
 
+        # Stacked widget: Serial page / UDP page
+        self._conn_stack = QStackedWidget()
+
+        # Page 0: Serial
+        serial_page = QWidget()
+        serial_layout = QHBoxLayout(serial_page)
+        serial_layout.setContentsMargins(0, 0, 0, 0)
+
+        serial_layout.addWidget(QLabel("COM:"))
+        self._com_combo = QComboBox()
+        self._com_combo.setStyleSheet("background: #2a2a2a; color: #eee; padding: 4px;")
+        self._com_combo.setMinimumWidth(100)
+        serial_layout.addWidget(self._com_combo)
+
+        self._refresh_btn = QPushButton("↻")
+        self._refresh_btn.setFixedWidth(30)
+        self._refresh_btn.setStyleSheet(self._btn_style("#555"))
+        self._refresh_btn.setToolTip("Refresh COM ports")
+        self._refresh_btn.clicked.connect(self._scan_ports)
+        serial_layout.addWidget(self._refresh_btn)
+
+        serial_layout.addWidget(QLabel("Baud:"))
+        self._baud_combo = QComboBox()
+        self._baud_combo.setStyleSheet("background: #2a2a2a; color: #eee; padding: 4px;")
+        for baud in ["9600", "19200", "38400", "57600", "115200"]:
+            self._baud_combo.addItem(baud)
+        self._baud_combo.setCurrentText("57600")
+        serial_layout.addWidget(self._baud_combo)
+
+        self._conn_stack.addWidget(serial_page)
+
+        # Page 1: UDP
+        udp_page = QWidget()
+        udp_layout = QHBoxLayout(udp_page)
+        udp_layout.setContentsMargins(0, 0, 0, 0)
+        self._udp_input = QLineEdit("udp:127.0.0.1:14550")
+        self._udp_input.setStyleSheet("background: #2a2a2a; color: #eee; border: 1px solid #555; padding: 4px;")
+        udp_layout.addWidget(self._udp_input)
+
+        self._conn_stack.addWidget(udp_page)
+        self._conn_stack.setCurrentIndex(1)  # UDP default
+        conn_main.addWidget(self._conn_stack)
+
+        # Radio toggle
+        self._serial_radio.toggled.connect(lambda checked: self._conn_stack.setCurrentIndex(0 if checked else 1))
+        self._serial_radio.toggled.connect(lambda checked: self._scan_ports() if checked else None)
+
+        # Connect / Disconnect buttons
+        btn_row = QHBoxLayout()
         self._connect_btn = QPushButton("Connect")
+        self._connect_btn.setFixedHeight(32)
         self._connect_btn.setStyleSheet(self._btn_style("#2196F3"))
         self._connect_btn.clicked.connect(self._on_connect)
-        conn_layout.addWidget(self._connect_btn)
+        btn_row.addWidget(self._connect_btn)
 
         self._disconnect_btn = QPushButton("Disconnect")
+        self._disconnect_btn.setFixedHeight(32)
         self._disconnect_btn.setStyleSheet(self._btn_style("#666"))
         self._disconnect_btn.clicked.connect(self.disconnect_requested.emit)
         self._disconnect_btn.setEnabled(False)
-        conn_layout.addWidget(self._disconnect_btn)
+        btn_row.addWidget(self._disconnect_btn)
+        conn_main.addLayout(btn_row)
 
         layout.addWidget(conn_group)
 
-        # Arm/Mode group
+        # ── Arm/Mode group ────────────────────────────────────
         cmd_group = QGroupBox("Commands")
         cmd_group.setStyleSheet(self._group_style())
         cmd_layout = QHBoxLayout(cmd_group)
@@ -89,12 +179,11 @@ class ControlPanel(QWidget):
 
         layout.addWidget(cmd_group)
 
-        # Speed + Manual Control group
+        # ── Speed + Manual Control ────────────────────────────
         ctrl_group = QGroupBox("Manual Control (WASD + Q/E + R/F)")
         ctrl_group.setStyleSheet(self._group_style())
         ctrl_layout = QVBoxLayout(ctrl_group)
 
-        # Speed input
         speed_layout = QHBoxLayout()
         speed_layout.addWidget(QLabel("Speed (%):"))
         self._speed_spin = QSpinBox()
@@ -104,14 +193,12 @@ class ControlPanel(QWidget):
         speed_layout.addWidget(self._speed_spin)
         ctrl_layout.addLayout(speed_layout)
 
-        # Key indicator
         self._key_label = QLabel("Keys: --")
         self._key_label.setFont(QFont("Consolas", 11))
         self._key_label.setAlignment(Qt.AlignCenter)
         self._key_label.setStyleSheet("color: #0f0; background: #111; padding: 8px; border: 1px solid #333;")
         ctrl_layout.addWidget(self._key_label)
 
-        # Key legend
         legend = QLabel(
             "W/S: Forward/Back  |  A/D: Left/Right\n"
             "Q/E: Yaw Left/Right  |  R/F: Up/Down"
@@ -122,10 +209,22 @@ class ControlPanel(QWidget):
 
         layout.addWidget(ctrl_group)
 
-        # Avoidance toggle
+        # ── Avoidance toggle + mode selector ──────────────────
         avoid_group = QGroupBox("Obstacle Avoidance")
         avoid_group.setStyleSheet(self._group_style())
-        avoid_layout = QHBoxLayout(avoid_group)
+        avoid_layout = QVBoxLayout(avoid_group)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Mode:"))
+        self._avoid_mode_combo = QComboBox()
+        self._avoid_mode_combo.addItem("Auto (Random)", "auto")
+        self._avoid_mode_combo.addItem("GPT-4o Advisor", "gpt")
+        self._avoid_mode_combo.setStyleSheet("background: #2a2a2a; color: #eee; padding: 4px;")
+        self._avoid_mode_combo.currentIndexChanged.connect(
+            lambda: self.avoidance_mode_changed.emit(self._avoid_mode_combo.currentData())
+        )
+        mode_row.addWidget(self._avoid_mode_combo)
+        avoid_layout.addLayout(mode_row)
 
         self._avoid_btn = QPushButton("Enable Avoidance")
         self._avoid_btn.setCheckable(True)
@@ -134,44 +233,110 @@ class ControlPanel(QWidget):
         avoid_layout.addWidget(self._avoid_btn)
 
         layout.addWidget(avoid_group)
+
+        # ── OpenAI API Key ────────────────────────────────────
+        api_group = QGroupBox("OpenAI API Key")
+        api_group.setStyleSheet(self._group_style())
+        api_layout = QVBoxLayout(api_group)
+
+        key_row = QHBoxLayout()
+        self._api_key_input = QLineEdit()
+        self._api_key_input.setEchoMode(QLineEdit.Password)
+        self._api_key_input.setPlaceholderText("sk-...")
+        self._api_key_input.setStyleSheet("background: #2a2a2a; color: #eee; border: 1px solid #555; padding: 4px;")
+        key_row.addWidget(self._api_key_input)
+
+        self._api_save_btn = QPushButton("Save")
+        self._api_save_btn.setStyleSheet(self._btn_style("#4CAF50"))
+        self._api_save_btn.clicked.connect(self._on_save_api_key)
+        key_row.addWidget(self._api_save_btn)
+
+        self._api_clear_btn = QPushButton("Clear")
+        self._api_clear_btn.setStyleSheet(self._btn_style("#f44336"))
+        self._api_clear_btn.clicked.connect(self._on_clear_api_key)
+        key_row.addWidget(self._api_clear_btn)
+
+        api_layout.addLayout(key_row)
+
+        self._api_status = QLabel("")
+        self._api_status.setStyleSheet("color: #888; font-size: 10px;")
+        api_layout.addWidget(self._api_status)
+
+        layout.addWidget(api_group)
+
         layout.addStretch()
 
         # Track pressed keys
         self._pressed_keys = set()
 
+        # Load saved API key
+        self._load_api_key()
+
+    # ── Port scanning ─────────────────────────────────────
+
+    def _scan_ports(self):
+        """Scan for available COM ports."""
+        self._com_combo.clear()
+        try:
+            from serial.tools.list_ports import comports
+            ports = sorted(comports(), key=lambda p: p.device)
+            for port in ports:
+                self._com_combo.addItem(f"{port.device} — {port.description}", port.device)
+            if not ports:
+                self._com_combo.addItem("No COM ports found", "")
+        except ImportError:
+            self._com_combo.addItem("pyserial not installed", "")
+
+    # ── API key persistence ───────────────────────────────
+
+    def _load_api_key(self):
+        """Load saved API key from config file."""
+        cfg = _load_config()
+        key = cfg.get("openai_api_key", "")
+        if key:
+            self._api_key_input.setText(key)
+            os.environ["OPENAI_API_KEY"] = key
+            masked = key[:7] + "..." + key[-4:] if len(key) > 11 else "***"
+            self._api_status.setText(f"Loaded from config ({masked})")
+            self._api_status.setStyleSheet("color: #4CAF50; font-size: 10px;")
+
+    def _on_save_api_key(self):
+        key = self._api_key_input.text().strip()
+        if not key:
+            return
+        _save_config({"openai_api_key": key})
+        os.environ["OPENAI_API_KEY"] = key
+        self.api_key_saved.emit(key)
+        masked = key[:7] + "..." + key[-4:] if len(key) > 11 else "***"
+        self._api_status.setText(f"Saved ({masked})")
+        self._api_status.setStyleSheet("color: #4CAF50; font-size: 10px;")
+        print(f"[CONFIG] API key saved ({masked})")
+
+    def _on_clear_api_key(self):
+        self._api_key_input.clear()
+        os.environ.pop("OPENAI_API_KEY", None)
+        _save_config({"openai_api_key": ""})
+        self._api_status.setText("Cleared")
+        self._api_status.setStyleSheet("color: #f44; font-size: 10px;")
+        print("[CONFIG] API key cleared")
+
+    # ── Manual control ────────────────────────────────────
+
     def get_speed(self):
-        """Return speed as fraction 0.0 - 1.0."""
         return self._speed_spin.value() / 100.0
 
     def get_manual_control_values(self):
-        """Return (x, y, z, r) based on currently pressed keys and speed.
-
-        Returns values in -1000 to 1000 range for x, y, r and 0-1000 for z.
-        """
-        speed = self._speed_spin.value() * 10  # 0-1000 range
-
-        x = 0  # forward/backward
-        y = 0  # left/right
-        z = 500  # throttle mid
-        r = 0  # yaw
-
-        if Qt.Key_W in self._pressed_keys:
-            x = speed
-        if Qt.Key_S in self._pressed_keys:
-            x = -speed
-        if Qt.Key_A in self._pressed_keys:
-            y = -speed
-        if Qt.Key_D in self._pressed_keys:
-            y = speed
-        if Qt.Key_Q in self._pressed_keys:
-            r = -speed
-        if Qt.Key_E in self._pressed_keys:
-            r = speed
-        if Qt.Key_R in self._pressed_keys:
-            z = 500 + speed // 2
-        if Qt.Key_F in self._pressed_keys:
-            z = 500 - speed // 2
-
+        speed = self._speed_spin.value() * 10
+        x = y = r = 0
+        z = 500
+        if Qt.Key_W in self._pressed_keys: x = speed
+        if Qt.Key_S in self._pressed_keys: x = -speed
+        if Qt.Key_A in self._pressed_keys: y = -speed
+        if Qt.Key_D in self._pressed_keys: y = speed
+        if Qt.Key_Q in self._pressed_keys: r = -speed
+        if Qt.Key_E in self._pressed_keys: r = speed
+        if Qt.Key_R in self._pressed_keys: z = 500 + speed // 2
+        if Qt.Key_F in self._pressed_keys: z = 500 - speed // 2
         return (x, y, z, r)
 
     def handle_key_press(self, key):
@@ -193,6 +358,8 @@ class ControlPanel(QWidget):
         active = [key_names.get(k, "") for k in self._pressed_keys if k in key_names]
         self._key_label.setText("Keys: " + " ".join(active) if active else "Keys: --")
 
+    # ── Connection ────────────────────────────────────────
+
     def set_connected(self, connected):
         self._connect_btn.setEnabled(not connected)
         self._disconnect_btn.setEnabled(connected)
@@ -204,11 +371,22 @@ class ControlPanel(QWidget):
             self._connect_btn.setStyleSheet(self._btn_style("#2196F3"))
 
     def _on_connect(self):
-        self.connect_requested.emit(self._conn_input.text().strip())
+        if self._serial_radio.isChecked():
+            port = self._com_combo.currentData()
+            baud = self._baud_combo.currentText()
+            if port:
+                conn_str = f"{port},{baud}"
+            else:
+                return
+        else:
+            conn_str = self._udp_input.text().strip()
+        self.connect_requested.emit(conn_str)
 
     def _on_avoidance_toggle(self, checked):
         self._avoid_btn.setText("Avoidance ON" if checked else "Enable Avoidance")
         self.avoidance_toggled.emit(checked)
+
+    # ── Styles ────────────────────────────────────────────
 
     @staticmethod
     def _group_style():

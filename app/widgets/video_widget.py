@@ -28,6 +28,7 @@ class VideoWidget(QWidget):
         self._overlay_text = ""
         self._overlay_color = QColor(0, 255, 0)
         self._distance_text = ""
+        self._command_text = ""  # e.g. "BACKWARD-LEFT vel=(-0.5,-0.4,0.0)"
 
     def update_frame(self, rgb_frame):
         """Update display with new RGB frame (numpy H,W,3 uint8)."""
@@ -37,7 +38,7 @@ class VideoWidget(QWidget):
         pixmap = QPixmap.fromImage(qimg)
 
         # Draw overlay
-        if self._overlay_text or self._distance_text:
+        if self._overlay_text or self._distance_text or self._command_text:
             painter = QPainter(pixmap)
             painter.setRenderHint(QPainter.Antialiasing)
 
@@ -51,6 +52,29 @@ class VideoWidget(QWidget):
                     Qt.AlignHCenter | Qt.AlignTop,
                     self._distance_text
                 )
+
+            # Command text (below distance, top-left area)
+            if self._command_text:
+                font = QFont("Consolas", 12, QFont.Bold)
+                painter.setFont(font)
+                fm = painter.fontMetrics()
+
+                # Split into direction and velocity lines
+                lines = self._command_text.split("\n")
+                y_offset = 35
+                for line in lines:
+                    # Background for readability
+                    text_rect = fm.boundingRect(line)
+                    bg_rect = text_rect.adjusted(-6, -2, 6, 2)
+                    bg_rect.moveTo(8, y_offset)
+                    painter.fillRect(bg_rect, QColor(0, 0, 0, 180))
+
+                    if "vel=" in line:
+                        painter.setPen(QColor(0, 200, 255))  # cyan for velocity
+                    else:
+                        painter.setPen(QColor(0, 255, 100))  # green for direction
+                    painter.drawText(10, y_offset + fm.ascent(), line)
+                    y_offset += fm.height() + 4
 
             # Decision overlay (bottom-center)
             if self._overlay_text:
@@ -85,6 +109,11 @@ class VideoWidget(QWidget):
         """Set the distance display text."""
         self._distance_text = text
 
+    def set_command_text(self, text):
+        """Set the velocity command text overlay (top-left)."""
+        self._command_text = text
+
     def clear_overlay(self):
         self._overlay_text = ""
         self._distance_text = ""
+        self._command_text = ""

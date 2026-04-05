@@ -16,7 +16,11 @@ class DepthEstimator:
         else:
             self.device = device
         self.pipe = None
-        self.depth_scale = 1.0  # Calibration scale factor for metric depth
+        # Calibration: metric_distance = depth_scale / raw_disparity
+        # To calibrate: place an object at a known distance (e.g. 1m),
+        # read the raw disparity from the CLI, then set:
+        #   depth_scale = known_distance * raw_disparity
+        self.depth_scale = 2.0
 
     def load(self):
         """Load the depth estimation pipeline."""
@@ -25,6 +29,7 @@ class DepthEstimator:
             model=self.MODEL_ID,
             device=self.device,
         )
+        print("[DEPTH] Model loaded on", self.device)
 
     # Resolution to run inference at — smaller = faster, less accurate
     INFERENCE_SIZE = (320, 240)  # (width, height)
@@ -36,7 +41,7 @@ class DepthEstimator:
             rgb_frame: numpy array (H, W, 3) in RGB format, uint8.
 
         Returns:
-            depth_map: numpy array (H, W) with relative depth values (float32).
+            depth_normalized: numpy array (H, W) normalized 0-1 (float32).
             center_distance: estimated distance to center region in meters.
         """
         if self.pipe is None:
@@ -50,51 +55,75 @@ class DepthEstimator:
         image = Image.fromarray(small)
 
         result = self.pipe(image)
-        depth_map = np.array(result["depth"], dtype=np.float32)
 
-        # Resize depth map to match input frame
-        if depth_map.shape[:2] != rgb_frame.shape[:2]:
-            import cv2
-            depth_map = cv2.resize(depth_map, (rgb_frame.shape[1], rgb_frame.shape[0]))
+        # Use raw predicted_depth (disparity) for distance estimation
+        raw_disparity = result["predicted_depth"].numpy().squeeze()
 
-        # Normalize to 0-1 range
-        d_min = depth_map.min()
-        d_max = depth_map.max()
+        # Resize to match input frame
+        if raw_disparity.shape[:2] != rgb_frame.shape[:2]:
+            raw_disparity = cv2.resize(raw_disparity, (rgb_frame.shape[1], rgb_frame.shape[0]))
+
+        # Normalize to 0-1 for visualization
+        d_min = raw_disparity.min()
+        d_max = raw_disparity.max()
         if d_max - d_min > 0:
-            depth_normalized = (depth_map - d_min) / (d_max - d_min)
+            depth_normalized = (raw_disparity - d_min) / (d_max - d_min)
         else:
-            depth_normalized = np.zeros_like(depth_map)
+            depth_normalized = np.zeros_like(raw_disparity)
 
-        # Extract center region distance
-        center_distance = self._estimate_center_distance(depth_normalized)
+        # Extract regional distances using raw disparity
+        center_distance = self._estimate_region_distance(raw_disparity, "center")
+        left_distance = self._estimate_region_distance(raw_disparity, "left")
+        right_distance = self._estimate_region_distance(raw_disparity, "right")
 
-        return depth_normalized, center_distance
+        distances = {
+            "center": center_distance,
+            "left": left_distance,
+            "right": right_distance,
+        }
 
-    def _estimate_center_distance(self, depth_normalized):
-        """Estimate distance from center region of the depth map.
+        return depth_normalized, center_distance, distances
 
-        Uses the center 20% of the frame. Higher depth values = farther away
-        in Depth Anything output, so we invert for distance.
+    def _estimate_region_distance(self, raw_disparity, region="center"):
+        """Estimate distance to the closest object in a region.
 
+        Regions:
+            center: center 20% of frame
+            left:   left third, middle vertical band
+            right:  right third, middle vertical band
+
+        Uses 75th percentile of disparity (focuses on closest objects).
         Returns approximate distance in meters.
         """
-        h, w = depth_normalized.shape
-        cy, cx = h // 2, w // 2
-        rh, rw = h // 10, w // 10  # 20% region
+        h, w = raw_disparity.shape
+        cy = h // 2
+        rh = h // 5  # vertical band height (40% of frame)
 
-        center_region = depth_normalized[cy - rh:cy + rh, cx - rw:cx + rw]
-        if center_region.size == 0:
+        if region == "center":
+            cx = w // 2
+            rw = w // 10
+            roi = raw_disparity[cy - rh:cy + rh, cx - rw:cx + rw]
+        elif region == "left":
+            # Left third: columns 0 to w/3
+            x_start = 0
+            x_end = w // 3
+            roi = raw_disparity[cy - rh:cy + rh, x_start:x_end]
+        elif region == "right":
+            # Right third: columns 2w/3 to w
+            x_start = 2 * w // 3
+            x_end = w
+            roi = raw_disparity[cy - rh:cy + rh, x_start:x_end]
+        else:
             return None
 
-        # Depth Anything: higher values = closer (disparity-like)
-        # Convert to distance: distance ~ scale / disparity
-        mean_depth = center_region.mean()
-        if mean_depth < 0.01:
-            return 10.0  # Very far
+        if roi.size == 0:
+            return None
 
-        # Approximate metric conversion
-        # This is a rough heuristic — tune depth_scale for your camera/setup
-        distance = self.depth_scale / (mean_depth + 0.01)
+        disp_p75 = float(np.percentile(roi, 75))
+        if disp_p75 < 0.01:
+            return 20.0
+
+        distance = self.depth_scale / disp_p75
         return float(np.clip(distance, 0.1, 20.0))
 
     def colorize_depth(self, depth_normalized):

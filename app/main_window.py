@@ -36,6 +36,7 @@ from app.widgets.depth_widget import DepthWidget
 from app.widgets.status_panel import StatusPanel
 from app.widgets.control_panel import ControlPanel
 from app.widgets.avoidance_log import AvoidanceLog
+from app.widgets.gpt_log import GPTLog
 
 
 class MainWindow(QMainWindow):
@@ -94,6 +95,9 @@ class MainWindow(QMainWindow):
         self._avoidance_log = AvoidanceLog()
         right.addWidget(self._avoidance_log, stretch=1)
 
+        self._gpt_log = GPTLog()
+        right.addWidget(self._gpt_log, stretch=1)
+
         main_layout.addLayout(left, stretch=3)
         main_layout.addLayout(right, stretch=2)
 
@@ -113,6 +117,7 @@ class MainWindow(QMainWindow):
         self._control_panel.disarm_requested.connect(self._mavlink.disarm)
         self._control_panel.mode_change_requested.connect(self._mavlink.set_mode)
         self._control_panel.avoidance_toggled.connect(self._on_avoidance_toggle)
+        self._control_panel.avoidance_mode_changed.connect(self._avoidance_thread.set_avoidance_mode)
         self._control_panel.camera_changed.connect(self._on_camera_changed)
 
         # Drone thread
@@ -128,6 +133,14 @@ class MainWindow(QMainWindow):
         # Avoidance thread
         self._avoidance_thread.state_changed.connect(self._on_avoidance_state)
         self._avoidance_thread.decision_made.connect(self._avoidance_log.add_log_entry)
+
+        # GPT advisor signals
+        self._avoidance_thread.gpt_sent.connect(self._gpt_log.add_sent)
+        self._avoidance_thread.gpt_received.connect(self._gpt_log.add_received)
+        self._avoidance_thread.gpt_error.connect(self._gpt_log.add_error)
+
+        # Command overlay on video
+        self._avoidance_thread.command_display.connect(self._video_widget.set_command_text)
 
     # ── Initialization ─────────────────────────────────────
 
@@ -200,19 +213,25 @@ class MainWindow(QMainWindow):
 
     # ── Camera / Depth ─────────────────────────────────────
 
-    def _on_frame_ready(self, rgb_frame, depth_colored, center_distance):
+    def _on_frame_ready(self, rgb_frame, depth_colored, center_distance, distances):
         # Update video widget
         self._video_widget.update_frame(rgb_frame)
         self._depth_widget.update_depth(depth_colored)
 
         # Update distance overlay
         if center_distance is not None:
-            self._video_widget.set_distance_text(f"Fwd Distance: {center_distance:.2f} m")
+            L = (distances or {}).get("left", 0) or 0
+            R = (distances or {}).get("right", 0) or 0
+            self._video_widget.set_distance_text(
+                f"Fwd: {center_distance:.2f}m  L: {L:.2f}m  R: {R:.2f}m"
+            )
         else:
             self._video_widget.set_distance_text("")
 
-        # Feed distance to avoidance thread
+        # Feed distance and frame to avoidance thread
         self._avoidance_thread.update_distance(center_distance)
+        self._avoidance_thread.update_distances(distances)
+        self._avoidance_thread.update_frame(rgb_frame)
 
     # ── Avoidance ──────────────────────────────────────────
 
@@ -233,9 +252,14 @@ class MainWindow(QMainWindow):
         elif state == AvoidanceState.OBSTACLE_DETECTED.value:
             self._video_widget.set_overlay("OBSTACLE DETECTED — STOPPING", QColor(255, 0, 0))
         elif state == AvoidanceState.HOVERING.value:
-            self._video_widget.set_overlay("HOVERING — DECIDING...", QColor(255, 255, 0))
+            mode = self._avoidance_thread._avoidance_mode
+            if mode == "gpt":
+                self._video_widget.set_overlay("HOVERING -- QUERYING GPT-4o...", QColor(255, 255, 0))
+            else:
+                self._video_widget.set_overlay("HOVERING -- DECIDING...", QColor(255, 255, 0))
         elif state == AvoidanceState.EXECUTING.value:
-            self._video_widget.set_overlay(f"AVOIDING: {action}", QColor(255, 128, 0))
+            # Direction is shown by command_display overlay, just show EXECUTING
+            self._video_widget.set_overlay("EXECUTING AVOIDANCE", QColor(255, 128, 0))
         elif state == AvoidanceState.COMPLETED.value:
             self._video_widget.set_overlay("MANEUVER COMPLETE", QColor(0, 200, 255))
 

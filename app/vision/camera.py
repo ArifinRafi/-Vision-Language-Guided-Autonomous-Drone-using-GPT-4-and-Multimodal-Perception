@@ -30,6 +30,7 @@ class Camera:
         ret, frame = self.cap.read()
         if not ret:
             return None
+        frame = cv2.flip(frame, 1)  # flip horizontally to correct mirror
         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
     def release(self):

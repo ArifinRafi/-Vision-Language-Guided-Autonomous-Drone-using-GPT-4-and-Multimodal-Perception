@@ -12,8 +12,8 @@ class CameraThread(QThread):
     (DEPTH_FPS) to keep the UI smooth on CPU-only machines.
     """
 
-    frame_ready = pyqtSignal(np.ndarray, np.ndarray, object)
-    # Signals: (rgb_frame, depth_colorized, center_distance)
+    frame_ready = pyqtSignal(np.ndarray, np.ndarray, object, object)
+    # Signals: (rgb_frame, depth_colorized, center_distance, distances_dict)
 
     error_occurred = pyqtSignal(str)
 
@@ -29,6 +29,7 @@ class CameraThread(QThread):
         # Cached depth output — reused between inference frames
         self._last_depth_colored = None
         self._last_center_dist = None
+        self._last_distances = None
 
     def run(self):
         self._running = True
@@ -57,10 +58,15 @@ class CameraThread(QThread):
                 # Run depth inference only at DEPTH_FPS
                 if (self.depth_estimator.pipe is not None and
                         now - last_depth >= depth_interval):
-                    depth_norm, center_dist = self.depth_estimator.estimate(frame)
+                    depth_norm, center_dist, distances = self.depth_estimator.estimate(frame)
                     self._last_depth_colored = self.depth_estimator.colorize_depth(depth_norm)
                     self._last_center_dist = center_dist
+                    self._last_distances = distances
                     last_depth = time.monotonic()
+                    if center_dist is not None:
+                        L = distances.get("left", 0) or 0
+                        R = distances.get("right", 0) or 0
+                        print(f"[DEPTH] center={center_dist:.2f}m  left={L:.2f}m  right={R:.2f}m")
 
                 depth_colored = (
                     self._last_depth_colored
@@ -68,7 +74,7 @@ class CameraThread(QThread):
                     else np.zeros((*frame.shape[:2], 3), dtype=np.uint8)
                 )
 
-                self.frame_ready.emit(frame, depth_colored, self._last_center_dist)
+                self.frame_ready.emit(frame, depth_colored, self._last_center_dist, self._last_distances)
 
             except Exception as e:
                 self.error_occurred.emit(str(e))
