@@ -5,7 +5,7 @@ import json
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QGroupBox, QSpinBox, QPushButton, QLineEdit, QComboBox,
-    QRadioButton, QStackedWidget, QButtonGroup
+    QRadioButton, QStackedWidget, QButtonGroup, QScrollArea
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
@@ -48,9 +48,18 @@ class ControlPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(6)
+        scroll.setWidget(scroll_content)
+        outer.addWidget(scroll)
 
         # Camera group
         cam_group = QGroupBox("Camera")
@@ -168,7 +177,7 @@ class ControlPanel(QWidget):
         cmd_layout.addWidget(self._disarm_btn)
 
         self._mode_combo = QComboBox()
-        self._mode_combo.addItems(["STABILIZE", "GUIDED", "LOITER", "ALT_HOLD", "LAND", "RTL"])
+        self._mode_combo.addItems(["STABILIZE", "GUIDED", "AUTO", "LOITER", "ALT_HOLD", "LAND", "RTL"])
         self._mode_combo.setStyleSheet("background: #2a2a2a; color: #eee; padding: 4px;")
         cmd_layout.addWidget(self._mode_combo)
 
@@ -404,7 +413,8 @@ class ControlPanel(QWidget):
         return f"""
             QPushButton {{
                 background-color: {color}; color: white; border: none;
-                padding: 6px 14px; border-radius: 3px; font-weight: bold;
+                padding: 5px 10px; border-radius: 3px; font-weight: bold;
+                font-size: 11px;
             }}
             QPushButton:hover {{ background-color: {color}; opacity: 0.8; }}
             QPushButton:pressed {{ background-color: #333; }}

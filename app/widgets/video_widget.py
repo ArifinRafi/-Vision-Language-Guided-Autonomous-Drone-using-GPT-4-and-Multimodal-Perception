@@ -21,7 +21,7 @@ class VideoWidget(QWidget):
 
         self._image_label = QLabel()
         self._image_label.setAlignment(Qt.AlignCenter)
-        self._image_label.setMinimumSize(480, 360)
+        self._image_label.setMinimumSize(320, 200)
         self._image_label.setStyleSheet("background-color: #1a1a1a; border: 1px solid #333;")
         self._layout.addWidget(self._image_label)
 

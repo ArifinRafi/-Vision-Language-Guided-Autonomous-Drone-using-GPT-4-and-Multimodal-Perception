@@ -39,6 +39,8 @@ class AvoidanceThread(QThread):
         self._latest_frame = None  # latest RGB frame for GPT snapshot
         self._avoidance_mode = "auto"  # "auto" or "gpt"
         self._distances = None  # {center, left, right} from depth model
+        self._avoidance_in_mission = True  # run avoidance even during AUTO
+        self._current_flight_mode = "UNKNOWN"  # tracked from telemetry
 
     def set_enabled(self, enabled):
         self._enabled = enabled
@@ -55,23 +57,60 @@ class AvoidanceThread(QThread):
         self._avoidance_mode = mode
         print(f"[AVOIDANCE] Mode set to: {mode}")
 
+    def set_avoidance_during_mission(self, enabled):
+        """Whether to run avoidance while drone is in AUTO mission mode."""
+        self._avoidance_in_mission = enabled
+        print(f"[AVOIDANCE] Avoidance during mission: {'ON' if enabled else 'OFF'}")
+
+    def update_current_mode(self, mode):
+        """Track the current flight mode (from telemetry)."""
+        self._current_flight_mode = mode
+
     def _switch_to_guided(self):
-        """Switch drone to GUIDED mode for velocity control, save previous mode."""
-        if self.mavlink.connected:
-            telemetry = self.mavlink.get_telemetry()
-            if telemetry:
-                current_mode = telemetry.get("mode", "UNKNOWN")
-                if current_mode != "GUIDED":
-                    self._pre_avoidance_mode = current_mode
-                    self.mavlink.set_mode("GUIDED")
-                    print(f"[AVOIDANCE] Mode: {current_mode} -> GUIDED (velocity control)")
+        """Force-switch drone to GUIDED mode for velocity control."""
+        if not self.mavlink.connected:
+            return
+        current_mode = self._current_flight_mode or "UNKNOWN"
+        if current_mode != "GUIDED":
+            self._pre_avoidance_mode = current_mode
+        print(f"[AVOIDANCE] Mode: {current_mode} -> GUIDED (forcing switch...)")
+
+        # Send set_mode multiple times to ensure ArduPilot accepts it
+        for attempt in range(5):
+            self.mavlink.set_mode("GUIDED")
+            # Also send hover (zero velocity) to stop forward motion immediately
+            self.mavlink.hover()
+            time.sleep(0.2)
+
+            # Verify mode changed
+            telem = self.mavlink.get_telemetry() or {}
+            if telem.get("mode") == "GUIDED":
+                print(f"[AVOIDANCE] GUIDED confirmed after {attempt+1} attempt(s)")
+                return
+
+        print(f"[AVOIDANCE] WARNING: GUIDED mode not confirmed after 5 attempts")
 
     def _restore_mode(self):
         """Restore the flight mode that was active before avoidance."""
-        if self._pre_avoidance_mode and self.mavlink.connected:
-            self.mavlink.set_mode(self._pre_avoidance_mode)
-            print(f"[AVOIDANCE] Mode: GUIDED -> {self._pre_avoidance_mode} (restored)")
-            self._pre_avoidance_mode = None
+        if not self._pre_avoidance_mode or not self.mavlink.connected:
+            return
+        prev_mode = self._pre_avoidance_mode
+        print(f"[AVOIDANCE] Mode: GUIDED -> {prev_mode} (restoring...)")
+
+        for attempt in range(5):
+            self.mavlink.set_mode(prev_mode)
+            time.sleep(0.2)
+            telem = self.mavlink.get_telemetry() or {}
+            if telem.get("mode") == prev_mode:
+                print(f"[AVOIDANCE] {prev_mode} confirmed after {attempt+1} attempt(s)")
+                break
+
+        # If we were in AUTO (mission), re-send mission_start to resume
+        if prev_mode == "AUTO":
+            time.sleep(0.3)
+            self.mavlink.mission_start()
+            print(f"[AVOIDANCE] Mission resumed (MISSION_START sent)")
+        self._pre_avoidance_mode = None
 
     def update_distance(self, distance):
         """Called from camera thread signal to update forward distance."""
@@ -146,12 +185,32 @@ class AvoidanceThread(QThread):
 
     def run(self):
         self._running = True
+        last_mode_check = 0.0
         while self._running:
             if not self._enabled or not self.mavlink.connected:
                 self.msleep(100)
                 continue
 
+            # If drone is in AUTO (mission) and user disabled mission-avoidance,
+            # stay idle so mission runs uninterrupted
+            if (self._current_flight_mode == "AUTO"
+                    and not self._avoidance_in_mission
+                    and self.avoidance.state == AvoidanceState.IDLE):
+                self.msleep(100)
+                continue
+
             state, action, velocity = self.avoidance.update(self._forward_distance)
+
+            # Periodically verify drone is still in GUIDED mode during avoidance
+            # AUTO mode or RC FLTMODE can fight back and override GUIDED
+            if state not in (AvoidanceState.IDLE,) and self._pre_avoidance_mode is not None:
+                now_ts = time.time()
+                if now_ts - last_mode_check > 0.5:  # check every 500ms
+                    last_mode_check = now_ts
+                    if self._current_flight_mode != "GUIDED":
+                        self.mavlink.set_mode("GUIDED")
+                        self.mavlink.hover()
+                        print(f"[AVOIDANCE] Mode drift: {self._current_flight_mode} -> re-forcing GUIDED + hover")
 
             # Emit state changes
             state_str = state.value
@@ -168,8 +227,9 @@ class AvoidanceThread(QThread):
                     print(f"[AVOIDANCE] *** OBSTACLE DETECTED *** dist={dist_str} threshold={self.avoidance.DISTANCE_THRESHOLD}m")
 
                 elif state == AvoidanceState.HOVERING:
+                    print(f"[AVOIDANCE] HOVERING -- stabilizing for {self.avoidance.HOVER_STABILIZE_TIME}s, drone must stop completely")
                     if self._avoidance_mode == "gpt":
-                        print(f"[AVOIDANCE] HOVERING -- querying GPT-4o...")
+                        print(f"[AVOIDANCE] -> querying GPT-4o (waiting for response)...")
                         # Launch GPT call in background thread
                         if not self._gpt_pending:
                             self._gpt_pending = True
@@ -224,10 +284,19 @@ class AvoidanceThread(QThread):
                     self.command_display.emit("")
                     print(f"[AVOIDANCE] MANEUVER COMPLETE -- checking if obstacle cleared (dist={dist_str})")
 
+                elif state == AvoidanceState.CLEARANCE:
+                    vx, vy, vz = velocity
+                    self.command_display.emit(
+                        f">> CLEARANCE (flying past obstacle)\nvel=({vx:.2f}, {vy:.2f}, {vz:.2f})  {self.avoidance.CLEARANCE_DURATION:.0f}s"
+                    )
+                    msg = f"[{timestamp}] CLEARANCE: flying forward to pass obstacle ({self.avoidance.CLEARANCE_DURATION:.0f}s)"
+                    self.decision_made.emit(msg)
+                    print(f"[AVOIDANCE] CLEARANCE: flying forward vel=({vx:.2f}, {vy:.2f}, {vz:.2f}) for {self.avoidance.CLEARANCE_DURATION}s")
+
                 elif state == AvoidanceState.IDLE:
                     self._restore_mode()
                     self.command_display.emit("")
-                    print(f"[AVOIDANCE] IDLE -- obstacle cleared, resuming normal flight")
+                    print(f"[AVOIDANCE] IDLE -- obstacle cleared + passed, resuming normal flight")
 
                 self._last_state = state
 
@@ -236,10 +305,13 @@ class AvoidanceThread(QThread):
             if state in (AvoidanceState.OBSTACLE_DETECTED, AvoidanceState.HOVERING,
                          AvoidanceState.COMPLETED):
                 self.mavlink.hover()
-            elif state == AvoidanceState.EXECUTING:
+            elif state in (AvoidanceState.EXECUTING, AvoidanceState.CLEARANCE):
                 self.mavlink.send_velocity(vx, vy, vz)
                 d = f"{self._forward_distance:.2f}m" if self._forward_distance else "N/A"
-                print(f"[AVOIDANCE] >> CMD vel=({vx:.2f}, {vy:.2f}, {vz:.2f}) dist={d}", end="\r")
+                phase = "CLEAR" if state == AvoidanceState.CLEARANCE else "AVOID"
+                print(
+                    f"[AVOIDANCE] >> {phase} vel=({vx:.2f}, {vy:.2f}, {vz:.2f}) dist={d}", end="\r"
+                )
 
             self.msleep(50)  # 20 Hz
 

@@ -34,7 +34,7 @@ class GPTLog(QWidget):
         # Log text area
         self._log_text = QTextEdit()
         self._log_text.setReadOnly(True)
-        self._log_text.setMaximumHeight(250)
+        self._log_text.setMaximumHeight(120)
         self._log_text.setStyleSheet(
             "background: #111; color: #ccc; font-family: Consolas; "
             "font-size: 11px; border: 1px solid #333;"

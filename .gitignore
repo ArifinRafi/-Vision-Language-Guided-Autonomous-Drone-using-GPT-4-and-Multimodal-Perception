@@ -8,3 +8,9 @@ app_config.json
 dist/
 build/
 .DS_Store
+
+# Claude Code
+.claude/
+CLAUDE.md
+generate_manual.py
+VLM-Drone_User_Manual.pdf

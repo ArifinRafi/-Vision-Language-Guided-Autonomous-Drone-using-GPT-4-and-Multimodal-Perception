@@ -1,4 +1,5 @@
 PyQt5>=5.15
+PyQtWebEngine>=5.15
 pymavlink>=2.4.40
 opencv-python>=4.8
 torch>=2.0,<2.7

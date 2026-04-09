@@ -32,7 +32,7 @@ class AvoidanceLog(QWidget):
 
         self._log_text = QTextEdit()
         self._log_text.setReadOnly(True)
-        self._log_text.setMaximumHeight(200)
+        self._log_text.setMaximumHeight(120)
         self._log_text.setStyleSheet(
             "background: #111; color: #ccc; font-family: Consolas; "
             "font-size: 11px; border: 1px solid #333;"
@@ -49,6 +49,7 @@ class AvoidanceLog(QWidget):
             "HOVERING": "#ff0",
             "EXECUTING": "#f80",
             "COMPLETED": "#0af",
+            "CLEARANCE": "#0c8",
         }
         color = color_map.get(state, "#ccc")
         self._state_label.setText(f"State: {state} | Action: {action}")

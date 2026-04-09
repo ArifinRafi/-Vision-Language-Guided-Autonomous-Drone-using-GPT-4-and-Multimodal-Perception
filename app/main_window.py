@@ -2,7 +2,7 @@
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
-    QMessageBox, QStatusBar, QApplication
+    QMessageBox, QStatusBar, QApplication, QTabWidget
 )
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QColor
@@ -37,6 +37,8 @@ from app.widgets.status_panel import StatusPanel
 from app.widgets.control_panel import ControlPanel
 from app.widgets.avoidance_log import AvoidanceLog
 from app.widgets.gpt_log import GPTLog
+from app.widgets.mission_planner import MissionPlannerWidget
+from app.threads.mission_thread import MissionThread
 
 
 class MainWindow(QMainWindow):
@@ -44,7 +46,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("VLM-Drone Control")
-        self.setMinimumSize(1280, 800)
+        self.setMinimumSize(960, 600)
         self.setStyleSheet("background-color: #1e1e1e; color: #eee;")
 
         # Core components
@@ -57,6 +59,7 @@ class MainWindow(QMainWindow):
         self._drone_thread = DroneThread(self._mavlink)
         self._camera_thread = CameraThread(self._camera, self._depth_estimator)
         self._avoidance_thread = AvoidanceThread(self._avoidance, self._mavlink)
+        self._mission_thread = MissionThread(self._mavlink)
 
         # Latest telemetry
         self._last_telemetry = {}
@@ -71,9 +74,20 @@ class MainWindow(QMainWindow):
     # ── UI Layout ──────────────────────────────────────────
 
     def _build_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        main_layout = QHBoxLayout(central)
+        # Tab widget as central
+        self._tabs = QTabWidget()
+        self._tabs.setStyleSheet(
+            "QTabWidget::pane { border: 1px solid #333; background: #1e1e1e; }"
+            "QTabBar::tab { background: #2a2a2a; color: #ccc; padding: 8px 18px; "
+            "border: 1px solid #333; border-bottom: none; }"
+            "QTabBar::tab:selected { background: #1e1e1e; color: #0af; "
+            "border-top: 2px solid #0af; }"
+        )
+        self.setCentralWidget(self._tabs)
+
+        # ── Tab 1: Control ───────────────────────────────
+        control_tab = QWidget()
+        main_layout = QHBoxLayout(control_tab)
         main_layout.setContentsMargins(6, 6, 6, 6)
 
         # Left column: video + controls
@@ -100,6 +114,12 @@ class MainWindow(QMainWindow):
 
         main_layout.addLayout(left, stretch=3)
         main_layout.addLayout(right, stretch=2)
+
+        self._tabs.addTab(control_tab, "Control")
+
+        # ── Tab 2: Mission Planner ───────────────────────
+        self._mission_planner = MissionPlannerWidget()
+        self._tabs.addTab(self._mission_planner, "Mission Planner")
 
         # Status bar
         self._status_bar = QStatusBar()
@@ -141,6 +161,35 @@ class MainWindow(QMainWindow):
 
         # Command overlay on video
         self._avoidance_thread.command_display.connect(self._video_widget.set_command_text)
+
+        # Mission Planner signals
+        self._mission_planner.upload_requested.connect(self._on_mission_upload)
+        self._mission_planner.download_requested.connect(self._on_mission_download)
+        self._mission_planner.start_requested.connect(self._on_mission_start)
+        self._mission_planner.clear_drone_requested.connect(self._on_mission_clear)
+        self._mission_planner.avoidance_during_mission_toggled.connect(
+            self._avoidance_thread.set_avoidance_during_mission
+        )
+
+        # Mission thread signals
+        self._mission_thread.upload_progress.connect(self._mission_planner.set_upload_progress)
+        self._mission_thread.upload_complete.connect(
+            lambda: self._mission_planner.add_status("Upload complete")
+        )
+        self._mission_thread.upload_error.connect(
+            lambda err: self._mission_planner.add_status(f"Upload error: {err}")
+        )
+        self._mission_thread.download_complete.connect(self._on_mission_downloaded)
+        self._mission_thread.download_error.connect(
+            lambda err: self._mission_planner.add_status(f"Download error: {err}")
+        )
+        self._mission_thread.mission_status.connect(self._mission_planner.add_status)
+        self._mission_thread.clear_complete.connect(
+            lambda: self._mission_planner.add_status("Drone mission cleared")
+        )
+        self._mission_thread.clear_error.connect(
+            lambda err: self._mission_planner.add_status(f"Clear error: {err}")
+        )
 
     # ── Initialization ─────────────────────────────────────
 
@@ -188,17 +237,58 @@ class MainWindow(QMainWindow):
             self._control_panel.set_connected(True)
             self._drone_thread.start()
             self._avoidance_thread.start()
+            self._mission_thread.start()
             self._status_bar.showMessage(f"Connected to {connection_string}")
         except Exception as e:
             QMessageBox.critical(self, "Connection Error", str(e))
             self._status_bar.showMessage(f"Connection failed: {e}")
 
     def _on_disconnect(self):
+        self._mission_thread.stop()
         self._avoidance_thread.stop()
         self._drone_thread.stop()
         self._mavlink.disconnect()
         self._control_panel.set_connected(False)
         self._status_bar.showMessage("Disconnected")
+
+    # ── Mission Planner handlers ───────────────────────────
+
+    def _on_mission_upload(self, waypoints):
+        if not self._mavlink.connected:
+            QMessageBox.warning(self, "Not Connected", "Connect to drone first.")
+            return
+        self._mission_planner.add_status(f"Uploading {len(waypoints)} waypoints...")
+        self._mission_thread.request_upload(waypoints)
+
+    def _on_mission_download(self):
+        if not self._mavlink.connected:
+            QMessageBox.warning(self, "Not Connected", "Connect to drone first.")
+            return
+        self._mission_planner.add_status("Downloading mission from drone...")
+        self._mission_thread.request_download()
+
+    def _on_mission_downloaded(self, waypoints):
+        self._mission_planner._clear_all()
+        for wp in waypoints:
+            self._mission_planner._add_waypoint_row(wp)
+        self._mission_planner.add_status(f"Downloaded {len(waypoints)} waypoints")
+
+    def _on_mission_start(self):
+        if not self._mavlink.connected:
+            QMessageBox.warning(self, "Not Connected", "Connect to drone first.")
+            return
+        # Arm, set AUTO, start mission
+        self._mission_planner.add_status("Starting mission: arm + AUTO + MISSION_START")
+        self._mavlink.arm()
+        self._mavlink.set_mode("AUTO")
+        self._mavlink.mission_start()
+
+    def _on_mission_clear(self):
+        if not self._mavlink.connected:
+            QMessageBox.warning(self, "Not Connected", "Connect to drone first.")
+            return
+        self._mission_planner.add_status("Clearing drone mission memory...")
+        self._mission_thread.request_clear()
 
     def _on_connection_status(self, connected, message):
         if not connected:
@@ -210,6 +300,17 @@ class MainWindow(QMainWindow):
         self._last_telemetry = data
         self._status_panel.update_telemetry(data)
         self._avoidance_thread.update_altitude(data.get("altitude", 0))
+        # Feed current position + mission progress to Mission Planner
+        self._mission_planner.set_drone_position(
+            data.get("lat", 0.0), data.get("lon", 0.0), data.get("altitude", 0.0)
+        )
+        current_wp = data.get("mission_current_wp", 0)
+        mode = data.get("mode", "UNKNOWN")
+        # Only show mission progress when in AUTO mode
+        if mode == "AUTO":
+            self._mission_planner.set_mission_progress(current_wp, 0)
+        # Tell avoidance thread about current flight mode for AUTO-resume logic
+        self._avoidance_thread.update_current_mode(mode)
 
     # ── Camera / Depth ─────────────────────────────────────
 
@@ -262,6 +363,8 @@ class MainWindow(QMainWindow):
             self._video_widget.set_overlay("EXECUTING AVOIDANCE", QColor(255, 128, 0))
         elif state == AvoidanceState.COMPLETED.value:
             self._video_widget.set_overlay("MANEUVER COMPLETE", QColor(0, 200, 255))
+        elif state == AvoidanceState.CLEARANCE.value:
+            self._video_widget.set_overlay("CLEARANCE -- FLYING PAST OBSTACLE", QColor(0, 200, 100))
 
     # ── Manual Control ─────────────────────────────────────
 
@@ -297,6 +400,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._manual_timer.stop()
+        self._mission_thread.stop()
         self._avoidance_thread.stop()
         self._camera_thread.stop()
         self._drone_thread.stop()

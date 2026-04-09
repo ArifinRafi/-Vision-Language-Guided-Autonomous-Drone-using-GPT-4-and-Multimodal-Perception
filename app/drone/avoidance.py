@@ -10,6 +10,7 @@ class AvoidanceState(enum.Enum):
     HOVERING = "HOVERING"
     EXECUTING = "EXECUTING"
     COMPLETED = "COMPLETED"
+    CLEARANCE = "CLEARANCE"  # fly forward past the obstacle before resuming
 
 
 class AvoidanceAction(enum.Enum):
@@ -28,12 +29,14 @@ class ObstacleAvoidance:
     """State machine for obstacle avoidance with logic-based decisions."""
 
     DISTANCE_THRESHOLD = 1.0  # meters
-    HOVER_STABILIZE_TIME = 0.5  # seconds
+    HOVER_STABILIZE_TIME = 1.5  # seconds — min hover before executing maneuver
     MANEUVER_DURATION = 2.0  # seconds
     MANEUVER_SPEED = 0.5  # m/s
     MIN_ALTITUDE_FOR_DOWN = 2.0  # meters — don't go down if below this
     MAX_ALTITUDE_FOR_UP = 15.0  # meters — don't go up if above this
     CRITICAL_DISTANCE = 0.4  # meters — very close, strong backward
+    CLEARANCE_DURATION = 4.0  # seconds — fly forward past obstacle before resuming
+    CLEARANCE_SPEED = 0.5  # m/s — forward speed during clearance
 
     def __init__(self):
         self.state = AvoidanceState.IDLE
@@ -42,6 +45,7 @@ class ObstacleAvoidance:
         self._current_altitude = 0.0
         self._last_distance = None
         self._attempt_count = 0  # how many consecutive avoidance attempts
+        self._last_avoidance_vy = 0.0  # lateral dir from last maneuver (for clearance)
 
         # Velocity/duration set by decide_action_smart() or GPT
         self._gpt_velocity = None  # (vx, vy, vz) or None
@@ -196,14 +200,19 @@ class ObstacleAvoidance:
         elif self.state == AvoidanceState.HOVERING:
             elapsed = now - self._state_enter_time
 
-            # If velocity command is ready (from auto logic or GPT), execute it
+            # ENFORCE minimum hover time — drone must stop and stabilize
+            # BEFORE any maneuver, regardless of how fast command arrives
+            if elapsed < self.HOVER_STABILIZE_TIME:
+                return (self.state, self.current_action, (0, 0, 0))
+
+            # Stabilization done — execute command if available
             if self._gpt_velocity is not None:
                 self.state = AvoidanceState.EXECUTING
                 self._state_enter_time = now
                 vel = self._gpt_velocity
                 return (self.state, self.current_action, vel)
 
-            # Fallback: if GPT hasn't responded after 15s, use smart auto
+            # Fallback: if GPT hasn't responded after 15s of hover, use smart auto
             if elapsed >= 15.0:
                 action, vx, vy, vz, dur = self.decide_action_smart(forward_distance, {})
                 self.current_action = action
@@ -212,6 +221,7 @@ class ObstacleAvoidance:
                 self._state_enter_time = now
                 return (self.state, self.current_action, (vx, vy, vz))
 
+            # Still waiting for command — keep hovering
             return (self.state, self.current_action, (0, 0, 0))
 
         elif self.state == AvoidanceState.EXECUTING:
@@ -225,6 +235,9 @@ class ObstacleAvoidance:
                 vel = self.get_velocity_for_action(self.current_action)
                 duration = self.MANEUVER_DURATION
 
+            # Remember lateral direction for clearance phase
+            self._last_avoidance_vy = vel[1]
+
             if elapsed >= duration:
                 self.state = AvoidanceState.COMPLETED
                 self._state_enter_time = now
@@ -234,15 +247,39 @@ class ObstacleAvoidance:
 
         elif self.state == AvoidanceState.COMPLETED:
             if forward_distance is None or forward_distance >= self.DISTANCE_THRESHOLD:
-                self.state = AvoidanceState.IDLE
-                self.current_action = AvoidanceAction.NONE
-                self._attempt_count = 0  # reset on success
+                # Obstacle cleared — enter CLEARANCE to fly past it
+                self.state = AvoidanceState.CLEARANCE
+                self._state_enter_time = now
+                self._attempt_count = 0
             else:
                 # Still blocked — increment attempt count and try again
                 self._attempt_count += 1
                 self.state = AvoidanceState.HOVERING
                 self._state_enter_time = now
             return (self.state, self.current_action, (0, 0, 0))
+
+        elif self.state == AvoidanceState.CLEARANCE:
+            # Fly FORWARD + slight lateral (same direction as avoidance)
+            # to pass the obstacle before resuming AUTO
+            elapsed = now - self._state_enter_time
+
+            if elapsed >= self.CLEARANCE_DURATION:
+                # Clearance complete — safe to resume
+                self.state = AvoidanceState.IDLE
+                self.current_action = AvoidanceAction.NONE
+                return (self.state, self.current_action, (0, 0, 0))
+
+            # If obstacle reappears during clearance, abort and re-detect
+            if forward_distance is not None and forward_distance < self.CRITICAL_DISTANCE:
+                self.state = AvoidanceState.OBSTACLE_DETECTED
+                self._state_enter_time = now
+                self._clear_gpt_command()
+                return (self.state, self.current_action, (0, 0, 0))
+
+            # Forward + slight lateral in same direction we avoided
+            vy_clearance = self._last_avoidance_vy * 0.3  # gentle lateral drift
+            vel = (self.CLEARANCE_SPEED, vy_clearance, 0)
+            return (self.state, self.current_action, vel)
 
         return (self.state, self.current_action, (0, 0, 0))
 

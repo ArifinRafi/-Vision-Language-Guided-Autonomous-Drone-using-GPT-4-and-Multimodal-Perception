@@ -35,6 +35,7 @@ class StatusPanel(QWidget):
             ("Battery", "battery"), ("GPS", "gps"),
             ("Roll", "roll"), ("Pitch", "pitch"),
             ("Yaw", "yaw_deg"), ("Lat/Lon", "latlon"),
+            ("Motors PWM M1-M4", "motor_pwm"), ("Mission", "mission_wp"),
         ]
         label_style = "color: #888; font-size: 11px;"
         value_style = "color: #eee; font-size: 12px; font-family: Consolas;"
@@ -86,3 +87,26 @@ class StatusPanel(QWidget):
         lat = data.get("lat", 0)
         lon = data.get("lon", 0)
         self._labels["latlon"].setText(f"{lat:.6f}, {lon:.6f}")
+
+        # Motor PWM — shows if commands are actually affecting motors
+        m1, m2, m3, m4 = data.get("motor_pwm", (0, 0, 0, 0))
+        self._labels["motor_pwm"].setText(f"{m1} {m2} {m3} {m4}")
+        motors_spinning = any(p > 1100 for p in (m1, m2, m3, m4))
+        pwm_color = "#4f4" if motors_spinning else "#888"
+        self._labels["motor_pwm"].setStyleSheet(
+            f"color: {pwm_color}; font-size: 11px; font-family: Consolas;"
+        )
+
+        # Mission progress — only shows when in AUTO mode
+        mode = data.get("mode", "")
+        wp = data.get("mission_current_wp", 0)
+        if mode == "AUTO":
+            self._labels["mission_wp"].setText(f"WP {wp} (active)")
+            self._labels["mission_wp"].setStyleSheet(
+                "color: #0f0; font-size: 12px; font-family: Consolas; font-weight: bold;"
+            )
+        else:
+            self._labels["mission_wp"].setText("--")
+            self._labels["mission_wp"].setStyleSheet(
+                "color: #888; font-size: 12px; font-family: Consolas;"
+            )
