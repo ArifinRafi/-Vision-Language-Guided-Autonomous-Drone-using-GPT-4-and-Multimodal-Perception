@@ -1,298 +1,415 @@
+<h1 align="center">Vision-Language Guided Autonomous Drone</h1>
+
+<h3 align="center">Multimodal Perception and Natural Language Command Execution via GPT-4</h3>
+
 <p align="center">
-  <h1 align="center">VLM-RME</h1>
-  <p align="center">
-    <strong>Vision-Language Model for Robotic Maneuver Estimation</strong>
-  </p>
-  <p align="center">
-    Real-time obstacle avoidance for autonomous drones using monocular depth estimation and large language model reasoning.
-  </p>
-  <p align="center">
-    <a href="#demo">Demo</a> &bull;
-    <a href="#installation">Install</a> &bull;
-    <a href="#usage">Usage</a> &bull;
-    <a href="#architecture">Architecture</a> &bull;
-    <a href="#citation">Cite</a>
-  </p>
+  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/PyTorch-2.x-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white" />
+  <img src="https://img.shields.io/badge/GPT--4-OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white" />
+  <img src="https://img.shields.io/badge/MAVLink-2.0-00979D?style=for-the-badge&logo=arduino&logoColor=white" />
+  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" />
+</p>
+
+<p align="center">
+  <em>A research-grade Ground Control Station integrating large vision-language models with real-time UAV control</em>
+</p>
+
+<p align="center">
+  <a href="#-overview">Overview</a> &nbsp;&bull;&nbsp;
+  <a href="#-key-features">Features</a> &nbsp;&bull;&nbsp;
+  <a href="#-system-architecture">Architecture</a> &nbsp;&bull;&nbsp;
+  <a href="#-demo">Demo</a> &nbsp;&bull;&nbsp;
+  <a href="#-installation">Install</a> &nbsp;&bull;&nbsp;
+  <a href="#-usage">Usage</a> &nbsp;&bull;&nbsp;
+  <a href="#-citation">Cite</a>
 </p>
 
 ---
 
 ## Overview
 
-**VLM-RME** is a ground control station (GCS) that enables autonomous obstacle avoidance for ArduPilot-based UAVs by combining monocular depth estimation with large language model (LLM) reasoning. The system uses a single low-cost RGB camera to perceive the environment, estimates spatial depth using [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2), and queries GPT-4o to generate intelligent avoidance maneuvers grounded in real-time flight telemetry.
+This project presents a **Vision-Language Model (VLM) guided autonomous drone system** that couples the semantic reasoning capabilities of GPT-4 with real-time multimodal perception -- including monocular depth estimation and live camera feeds -- to enable natural language-driven UAV navigation and situational awareness.
 
-Unlike conventional approaches that require LiDAR, stereo cameras, or ultrasonic sensors, VLM-RME demonstrates that a **single monocular camera + a vision-language model** can provide effective reactive avoidance during autonomous waypoint missions.
+The system is designed as a modular, extensible Ground Control Station (GCS) that bridges the gap between high-level human intent and low-level flight commands. By integrating OpenAI's GPT-4 as a decision-making agent with onboard perception pipelines (Depth Anything V2), the drone can interpret environmental depth, assess spatial clearance, and autonomously issue MAVLink commands -- all within a real-time PyQt5 interface.
+
+This work sits at the intersection of **autonomous systems**, **multimodal AI**, and **human-robot interaction**, and is intended to serve as a reproducible research prototype for the robotics and AI community.
+
+---
 
 ## Problem Statement
 
-GPS-guided autonomous drone missions assume a clear flight path between waypoints. In real-world environments, unexpected obstacles (trees, buildings, birds, vehicles) can appear in the planned trajectory. Commercial solutions rely on expensive ranging sensors (LiDAR: ~$500+, stereo depth cameras: ~$200+). This project investigates whether:
+<table>
+<tr>
+<td width="50%">
 
-1. A **$10 USB webcam** with deep learning-based depth estimation can replace dedicated ranging hardware for forward obstacle detection.
-2. A **large language model** (GPT-4o) can make contextually aware avoidance decisions using only numerical telemetry and depth readings, without requiring pre-programmed heuristic rules for every scenario.
+### The Challenge
+
+GPS-guided autonomous drone missions assume unobstructed flight paths between waypoints. In real-world environments, unexpected obstacles -- trees, buildings, wildlife, vehicles -- can appear in the planned trajectory.
+
+Current solutions rely on **expensive dedicated sensors**:
+- LiDAR modules: ~$500+
+- Stereo depth cameras: ~$200+
+- Ultrasonic arrays: ~$100+
+
+</td>
+<td width="50%">
+
+### Our Approach
+
+We demonstrate that a **$10 USB webcam** combined with:
+
+1. **Transformer-based monocular depth estimation** (Depth Anything V2, 24.8M parameters)
+2. **Large language model reasoning** (GPT-4o) interpreting numerical sensor data
+3. **Spatial depth analysis** (left/center/right region percentile estimation)
+
+...can provide effective reactive obstacle avoidance during autonomous waypoint missions, at a fraction of the cost.
+
+</td>
+</tr>
+</table>
+
+---
 
 ## Key Features
 
-- **Monocular Depth Estimation** -- Depth Anything V2 Small (24.8M params) running at 3 FPS on CPU, producing dense depth maps from a single RGB camera
-- **Spatial Depth Analysis** -- Frame divided into left/center/right regions; 75th-percentile disparity used to focus on nearest obstacles
-- **Dual Avoidance Modes**
-  - *Auto*: Logic-based algorithm using spatial clearance, altitude, and attempt history
-  - *GPT-4o*: LLM-guided decisions with natural language reasoning
-- **Mission-Aware Avoidance** -- Seamless AUTO/GUIDED mode transitions during waypoint missions with clearance phase to prevent re-encounter
-- **Interactive Mission Planning** -- Leaflet-based map with click-to-add waypoints, drag-to-reposition, and .waypoint file import/export
-- **Full GCS Functionality** -- Telemetry, manual control, ARM/DISARM, mode switching, motor PWM monitoring
+<table>
+<tr>
+<td width="33%" align="center">
+<h4>Monocular Depth Perception</h4>
+<p>Depth Anything V2 Small running at 3 FPS on CPU. Dense depth maps from a single RGB camera with spatial region analysis (L/C/R).</p>
+</td>
+<td width="33%" align="center">
+<h4>GPT-4 Decision Engine</h4>
+<p>Real-time telemetry and depth readings sent to GPT-4o. Returns velocity commands with natural language reasoning and safety constraints.</p>
+</td>
+<td width="33%" align="center">
+<h4>Mission-Aware Avoidance</h4>
+<p>Seamless AUTO/GUIDED transitions during waypoint missions. 6-state machine with clearance phase prevents obstacle re-encounter.</p>
+</td>
+</tr>
+<tr>
+<td width="33%" align="center">
+<h4>Interactive Mission Planning</h4>
+<p>Leaflet-based map with click-to-add waypoints, drag-to-reposition, satellite/dark view toggle, and .waypoint file I/O.</p>
+</td>
+<td width="33%" align="center">
+<h4>Dual Avoidance Modes</h4>
+<p>Auto (logic-based spatial analysis) and GPT-4o (LLM reasoning) modes with automatic fallback between them on failure.</p>
+</td>
+<td width="33%" align="center">
+<h4>Full GCS Functionality</h4>
+<p>Telemetry, manual WASD control, ARM/DISARM, mode switching, motor PWM monitoring, serial/UDP connection with auto-detection.</p>
+</td>
+</tr>
+</table>
 
-## Demo
+---
 
-<p align="center">
-  <em>Demo video coming soon</em>
-</p>
-
-<!-- Replace with actual video link -->
-<!-- [![Demo Video](docs/demo_thumbnail.png)](https://youtu.be/YOUR_VIDEO_ID) -->
-
-| Control Tab | Mission Planner |
-|:-:|:-:|
-| ![Control](docs/control_tab.png) | ![Mission](docs/mission_tab.png) |
-
-> *Screenshots: Place your screenshots in `docs/` to display here.*
-
-<a name="architecture"></a>
 ## System Architecture
 
 ```
-                            +-----------------------+
-                            |    USB Camera (RGB)   |
-                            +----------+------------+
-                                       |
-                                  30 FPS capture
-                                       |
-                            +----------v------------+
-                            |   Depth Anything V2   |
-                            |   Small (24.8M params)|
-                            |   Inference @ 3 FPS   |
-                            +----------+------------+
-                                       |
-                              Dense Depth Map (H x W)
-                                       |
-                         +-------------+-------------+
-                         |             |             |
-                    Left Third    Center 20%    Right Third
-                    (distance)   (75th %ile)   (distance)
-                         |             |             |
-                         +------+------+------+------+
-                                |             |
-                          forward_dist    spatial_clearance
-                                |             |
-                    +-----------v-------------v-----------+
-                    |     Avoidance State Machine          |
-                    |  IDLE -> DETECTED -> HOVER ->        |
-                    |  EXECUTING -> COMPLETED -> CLEARANCE  |
-                    +---+------------------+---------------+
-                        |                  |
-                   Auto Mode          GPT-4o Mode
-                   (local logic)      (API call)
-                        |                  |
-                        +--------+---------+
-                                 |
-                          Velocity Command
-                          (vx, vy, vz, duration)
-                                 |
-                    +------------v------------+
-                    |   MAVLink (pymavlink)   |
-                    |   Serial / UDP / TCP    |
-                    +------------+------------+
-                                 |
-                    +------------v------------+
-                    |   ArduPilot Autopilot   |
-                    |   (Pixhawk / SITL)      |
-                    +-------------------------+
+                               ┌─────────────────────┐
+                               │   USB Camera (RGB)   │
+                               │     320 x 240        │
+                               └──────────┬───────────┘
+                                          │
+                                     30 FPS capture
+                                          │
+                               ┌──────────▼───────────┐
+                               │  Depth Anything V2   │
+                               │  Small (24.8M params)│
+                               │  Inference @ 3 FPS   │
+                               └──────────┬───────────┘
+                                          │
+                                 Dense Depth Map (H×W)
+                                          │
+                          ┌───────────────┼───────────────┐
+                          │               │               │
+                     Left Third      Center 20%     Right Third
+                     (distance)    (75th percentile)  (distance)
+                          │               │               │
+                          └───────┬───────┴───────┬───────┘
+                                  │               │
+                           forward_dist    spatial_clearance
+                                  │               │
+                     ┌────────────▼───────────────▼────────────┐
+                     │       Avoidance State Machine           │
+                     │                                         │
+                     │  IDLE ──▶ DETECTED ──▶ HOVER (1.5s)    │
+                     │    ▲                       │            │
+                     │    │                       ▼            │
+                     │  CLEARANCE (4s) ◀── EXECUTING (2-5s)   │
+                     │                                         │
+                     └────────┬──────────────────┬─────────────┘
+                              │                  │
+                         Auto Mode          GPT-4o Mode
+                        (local logic)       (API call)
+                              │                  │
+                              └────────┬─────────┘
+                                       │
+                                Velocity Command
+                              (vx, vy, vz, duration)
+                                       │
+                          ┌────────────▼────────────┐
+                          │   MAVLink (pymavlink)    │
+                          │   Serial / UDP / TCP     │
+                          └────────────┬────────────┘
+                                       │
+                          ┌────────────▼────────────┐
+                          │   ArduPilot Autopilot    │
+                          │   (Pixhawk / SITL)       │
+                          └─────────────────────────┘
 ```
 
 ### Avoidance State Machine
 
-```
-IDLE ──> OBSTACLE_DETECTED ──> HOVERING (1.5s) ──> EXECUTING (2-5s)
-  ^                                                       |
-  |                                                       v
-  +──────── CLEARANCE (4s forward) <──── COMPLETED ───────+
-                                              |
-                                    (still blocked? retry)
-```
+| State | Duration | Description |
+|:------|:---------|:------------|
+| `IDLE` | -- | Monitoring forward depth. No obstacle detected. |
+| `OBSTACLE_DETECTED` | instant | Force-switch to GUIDED mode (5 retries with verification). |
+| `HOVERING` | 1.5s min | Stabilize + compute avoidance decision (Auto or GPT-4o). |
+| `EXECUTING` | 2-5s | Execute velocity maneuver (direction based on spatial clearance). |
+| `COMPLETED` | instant | Check if obstacle cleared. Retry if still blocked. |
+| `CLEARANCE` | 4s | Fly **forward past** the obstacle before resuming mission. |
 
-The **clearance phase** is critical: after the avoidance maneuver, the drone flies *forward past the obstacle* for 4 seconds before resuming the mission. This prevents the deadlock scenario where the drone avoids laterally, resumes AUTO, and flies back into the same obstacle.
+> The **clearance phase** is critical: without it, the drone avoids laterally, resumes AUTO, and flies back into the same obstacle -- creating a deadlock.
 
-## Technologies
+---
 
-| Layer | Technology | Version |
-|-------|-----------|---------|
-| Interface | PyQt5 + PyQtWebEngine | 5.15+ |
-| Depth Model | Depth Anything V2 Small | HuggingFace |
-| Inference | PyTorch (CPU) | 2.6.0 |
-| Language Model | OpenAI GPT-4o | API v1 |
-| Drone Protocol | pymavlink (MAVLink 2.0) | 2.4.x |
-| Computer Vision | OpenCV | 4.8+ |
-| Map Rendering | Leaflet.js + CartoDB tiles | 1.9.4 |
-| Flight Controller | ArduPilot ArduCopter | 4.x |
+## Demo
+
+<p align="center">
+  <em>Video demonstration coming soon</em>
+</p>
+
+<!--
+[![Demo Video](docs/demo_thumbnail.png)](https://youtu.be/YOUR_VIDEO_ID)
+-->
+
+| Control Tab | Depth Map | Mission Planner |
+|:-:|:-:|:-:|
+| ![Control](docs/control_tab.png) | ![Depth](docs/depth_map.png) | ![Mission](docs/mission_tab.png) |
+
+> Place your screenshots in `docs/` and update the image paths above.
+
+---
+
+## Technologies Used
+
+| Layer | Technology | Version | Purpose |
+|:------|:-----------|:--------|:--------|
+| **Interface** | PyQt5 + PyQtWebEngine | 5.15+ | Desktop GCS application |
+| **Depth Model** | Depth Anything V2 Small | HuggingFace | Monocular depth estimation (24.8M params) |
+| **Inference** | PyTorch (CPU) | 2.6.0 | Deep learning model backend |
+| **Language Model** | OpenAI GPT-4o | API v1 | Intelligent avoidance reasoning |
+| **Drone Protocol** | pymavlink (MAVLink 2.0) | 2.4.x | Bidirectional drone communication |
+| **Computer Vision** | OpenCV | 4.8+ | Camera capture + image processing |
+| **Map Rendering** | Leaflet.js + CartoDB/ESRI | 1.9.4 | Interactive waypoint planning |
+| **Flight Controller** | ArduPilot ArduCopter | 4.x | Autopilot firmware |
+
+---
 
 ## Folder Structure
 
 ```
 VLM-RME/
-├── main.py                     # Entry point
-├── requirements.txt            # Dependencies
+├── main.py                           # Application entry point
+├── requirements.txt                  # Python dependencies
 ├── README.md
-├── .gitignore
 │
 ├── app/
-│   ├── main_window.py          # QTabWidget orchestration
+│   ├── main_window.py                # QTabWidget orchestration (Control + Mission tabs)
 │   │
-│   ├── drone/                  # Flight control & planning
-│   │   ├── mavlink_comm.py     # MAVLink connection + mission protocol
-│   │   ├── avoidance.py        # 6-state avoidance state machine
-│   │   └── mission.py          # Waypoint dataclass + file I/O
+│   ├── drone/                        # ── Flight Control & Planning ──
+│   │   ├── mavlink_comm.py           # MAVLink connection, telemetry, mission protocol
+│   │   ├── avoidance.py              # 6-state avoidance state machine
+│   │   └── mission.py                # Waypoint dataclass + .waypoint file I/O
 │   │
-│   ├── vision/                 # Perception pipeline
-│   │   ├── camera.py           # USB camera capture
-│   │   ├── depth_model.py      # Depth Anything V2 inference + spatial analysis
-│   │   └── gpt_advisor.py      # GPT-4o prompt engineering + API client
+│   ├── vision/                       # ── Perception Pipeline ──
+│   │   ├── camera.py                 # USB camera capture (320×240, buffered)
+│   │   ├── depth_model.py            # Depth Anything V2 inference + spatial analysis
+│   │   └── gpt_advisor.py            # GPT-4o prompt engineering + API client
 │   │
-│   ├── threads/                # Concurrent processing
-│   │   ├── drone_thread.py     # Telemetry polling (20 Hz)
-│   │   ├── camera_thread.py    # Frame capture (30 Hz) + depth (3 Hz)
-│   │   ├── avoidance_thread.py # Avoidance loop (20 Hz)
-│   │   └── mission_thread.py   # Mission upload/download
+│   ├── threads/                      # ── Concurrent Processing ──
+│   │   ├── drone_thread.py           # Telemetry polling @ 20 Hz
+│   │   ├── camera_thread.py          # Frame capture @ 30 Hz, depth @ 3 Hz
+│   │   ├── avoidance_thread.py       # Avoidance loop @ 20 Hz + GPT integration
+│   │   └── mission_thread.py         # Async mission upload/download
 │   │
-│   └── widgets/                # UI components
-│       ├── video_widget.py     # RGB feed + HUD overlay
-│       ├── depth_widget.py     # Depth map visualization
-│       ├── status_panel.py     # Telemetry display (14 fields)
-│       ├── control_panel.py    # Connection + commands + config
-│       ├── avoidance_log.py    # State machine log
-│       ├── gpt_log.py          # LLM communication log
-│       ├── mission_planner.py  # Map + waypoint table
-│       ├── map_view.py         # QWebEngine + Leaflet bridge
+│   └── widgets/                      # ── User Interface ──
+│       ├── video_widget.py           # RGB feed with HUD overlay
+│       ├── depth_widget.py           # Colorized depth map display
+│       ├── status_panel.py           # 14-field telemetry panel
+│       ├── control_panel.py          # Connection, ARM, mode, speed, API key
+│       ├── avoidance_log.py          # Avoidance state + decision log
+│       ├── gpt_log.py                # GPT-4o send/receive log
+│       ├── mission_planner.py        # Map + waypoint table + mission controls
+│       ├── map_view.py               # QWebEngine + QWebChannel Leaflet bridge
 │       └── map_assets/
-│           └── map.html        # Leaflet map (CartoDB + ESRI tiles)
+│           └── map.html              # Leaflet.js (CartoDB dark + ESRI satellite)
 │
-├── docs/                       # Documentation & figures
-│   └── (screenshots, diagrams)
-│
-└── demo/                       # Demo videos & sample data
-    └── (sample .waypoint files)
+├── docs/                             # Documentation, screenshots, diagrams
+└── demo/                             # Demo videos, sample .waypoint files
 ```
+
+---
 
 ## Installation
 
 ```bash
+# 1. Clone
 git clone https://github.com/ArifinRafi/VLM-RME.git
 cd VLM-RME
+
+# 2. Virtual environment
 python -m venv venv
-venv\Scripts\activate          # Windows
+venv\Scripts\activate              # Windows
+
+# 3. Install dependencies
 pip install -r requirements.txt
+
+# 4. PyTorch CPU (fixes DLL issues on Windows)
 pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu --force-reinstall
+
+# 5. Run
 python main.py
 ```
 
-> **Note:** The Depth Anything V2 Small model (~100 MB) downloads automatically on first launch and is cached locally.
+> **First launch:** The Depth Anything V2 Small model (~100 MB) downloads automatically from HuggingFace and is cached locally for subsequent runs.
 
 ### GPT-4o Setup (Optional)
 
-The GPT-4o advisor mode requires an OpenAI API key:
+1. Get an API key from [platform.openai.com](https://platform.openai.com/api-keys)
+2. In the app, paste the key in **OpenAI API Key** field, click **Save**
+3. Stored locally in `app_config.json` (gitignored -- never committed)
 
-1. Obtain a key from [platform.openai.com](https://platform.openai.com/api-keys)
-2. Enter the key in the app's **OpenAI API Key** field and click **Save**
-3. The key is stored locally in `app_config.json` (gitignored, never committed)
+---
 
 ## Usage
 
-### Quick Start (with SITL Simulator)
+### Testing with SITL (No Hardware Required)
 
 ```bash
-# Terminal 1: Start ArduPilot SITL (or use Mission Planner > SIMULATION > Multirotor)
+# Option 1: Mission Planner → SIMULATION → Multirotor → starts SITL automatically
+# Option 2: Command line
 sim_vehicle.py -v ArduCopter --map --console
-
-# Terminal 2: Run VLM-RME
-python main.py
-# Connect via: tcp:127.0.0.1:5763
 ```
 
-### Autonomous Mission with Obstacle Avoidance
+Connect VLM-RME via `tcp:127.0.0.1:5763`
 
-1. Upload a waypoint mission via Mission Planner (external)
-2. Open VLM-RME, connect to the drone
-3. Select avoidance mode (Auto or GPT-4o), click **Enable Avoidance**
-4. Set mode to **AUTO**, click **ARM**
-5. The drone flies the mission autonomously
-6. When an obstacle appears within 1.0m:
-   - Mode switches to GUIDED (verified, 5 retries)
-   - Drone hovers for 1.5s to stabilize
-   - Avoidance maneuver executes (2-5s)
-   - Clearance phase flies forward 4s past the obstacle
-   - Mode restores to AUTO, mission resumes
+### Mission + Obstacle Avoidance Workflow
 
-### Manual Control
+```
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  1. Upload waypoint mission via Mission Planner                  │
+ │  2. Close Mission Planner                                        │
+ │  3. Open VLM-RME → Connect to drone (Serial/UDP)                │
+ │  4. Select avoidance mode (Auto or GPT-4o) → Enable Avoidance   │
+ │  5. Set mode AUTO → ARM → Drone flies mission                   │
+ │                                                                  │
+ │  During flight:                                                  │
+ │  ┌─────────────────────────────────────────────────────────────┐ │
+ │  │ Obstacle < 1.0m → AUTO→GUIDED (forced) → Hover 1.5s        │ │
+ │  │ → Avoidance maneuver (2-5s) → Clearance forward (4s)       │ │
+ │  │ → GUIDED→AUTO (restored) → Mission resumes                 │ │
+ │  └─────────────────────────────────────────────────────────────┘ │
+ │                                                                  │
+ │  6. Mission completes → RTL/LAND                                 │
+ └──────────────────────────────────────────────────────────────────┘
+```
 
-Use **WASD** (forward/back/left/right), **QE** (yaw), **RF** (up/down) with adjustable speed slider.
+### Keyboard Control
+
+| Key | Action | Key | Action |
+|:---:|:-------|:---:|:-------|
+| `W` | Forward | `Q` | Yaw Left |
+| `S` | Backward | `E` | Yaw Right |
+| `A` | Left | `R` | Up |
+| `D` | Right | `F` | Down |
+
+---
 
 ## Research Significance
 
 This work addresses the intersection of three active research areas:
 
-1. **Monocular Depth Estimation for Robotics** -- Demonstrating that transformer-based depth models (Depth Anything V2) can provide actionable spatial awareness for real-time drone navigation, without stereo calibration or dedicated depth sensors.
+<table>
+<tr>
+<td width="33%">
 
-2. **LLM-Guided Robotic Decision Making** -- Exploring whether large language models can serve as high-level planners for reactive obstacle avoidance, interpreting numerical sensor data and producing physically grounded velocity commands with natural language reasoning.
+### Monocular Depth for Robotics
+Demonstrating that transformer-based depth models can provide actionable spatial awareness for UAV navigation without stereo calibration or dedicated depth sensors.
 
-3. **Low-Cost Autonomous Navigation** -- Validating that a complete obstacle avoidance pipeline can operate on commodity hardware (USB webcam + consumer CPU), lowering the barrier to autonomous UAV deployment in resource-constrained environments.
+</td>
+<td width="33%">
+
+### LLM-Guided Decisions
+Exploring whether large language models can serve as high-level planners for reactive obstacle avoidance, producing physically grounded velocity commands from numerical sensor data.
+
+</td>
+<td width="33%">
+
+### Low-Cost Autonomy
+Validating a complete avoidance pipeline on commodity hardware (USB webcam + consumer CPU), lowering the barrier to autonomous UAV deployment.
+
+</td>
+</tr>
+</table>
 
 ### Key Contributions
 
-- A **6-state avoidance architecture** with clearance phase that prevents oscillatory re-encounter with obstacles during waypoint missions
-- **Spatial depth analysis** using percentile-based region estimation (left/center/right) from monocular depth maps for directional avoidance decisions
-- **Dual-mode avoidance framework** combining deterministic logic and LLM reasoning, with automatic fallback between modes
+- A **6-state avoidance architecture** with clearance phase preventing oscillatory re-encounter during waypoint missions
+- **Spatial depth analysis** using percentile-based region estimation from monocular depth maps for directional decisions
+- **Dual-mode framework** combining deterministic logic and LLM reasoning with automatic fallback
 - **Mission-aware mode management** with robust AUTO/GUIDED transitions verified through retry mechanisms
+
+---
 
 ## Future Work
 
-- [ ] On-device LLM inference (Llama/Phi) for offline GPT-like reasoning
-- [ ] Multi-obstacle tracking with persistent obstacle map
-- [ ] Visual SLAM integration for GPS-denied environments
+- [ ] On-device LLM inference (Llama / Phi) for offline reasoning
+- [ ] Multi-obstacle tracking with persistent spatial map
+- [ ] Visual SLAM for GPS-denied indoor navigation
 - [ ] Stereo depth validation against monocular estimates
-- [ ] Real-world outdoor flight testing and quantitative evaluation
+- [ ] Real-world outdoor flight testing with quantitative evaluation
 - [ ] ROS 2 integration for multi-robot coordination
+
+---
 
 ## Contributing
 
-Contributions are welcome. Please open an issue to discuss proposed changes before submitting a pull request.
+Contributions are welcome. Please open an issue first to discuss proposed changes.
 
 ```bash
-# Fork the repo, create a feature branch
 git checkout -b feature/your-feature
-# Make changes, commit, push
+git commit -m "Add your feature"
 git push origin feature/your-feature
 # Open a Pull Request
 ```
 
+---
+
 <a name="citation"></a>
 ## Citation
-
-If you use this work in your research, please cite:
 
 ```bibtex
 @software{rafi2026vlmrme,
   author    = {Rafi, Arifin},
-  title     = {VLM-RME: Vision-Language Model for Robotic Maneuver Estimation},
+  title     = {{VLM-RME}: Vision-Language Model for Robotic Maneuver Estimation},
   year      = {2026},
   publisher = {GitHub},
   url       = {https://github.com/ArifinRafi/VLM-RME}
 }
 ```
 
+---
+
 ## License
 
-This project is developed for academic research purposes. Please contact the author for licensing inquiries.
+MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
 <p align="center">
-  <sub>Built by <a href="https://github.com/ArifinRafi">Arifin Rafi</a> | Roboway Technologies</sub>
+  <sub>Built with by <strong><a href="https://github.com/ArifinRafi">Arifin Rafi</a></strong> &nbsp;|&nbsp; Roboway Technologies</sub>
 </p>
