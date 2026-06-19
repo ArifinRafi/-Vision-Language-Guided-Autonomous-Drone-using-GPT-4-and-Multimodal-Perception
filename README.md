@@ -186,11 +186,11 @@ We demonstrate that a **$10 USB webcam** combined with:
 [![Demo Video](docs/demo_thumbnail.png)](https://youtu.be/YOUR_VIDEO_ID)
 -->
 
-| Control Tab | Depth Map | Mission Planner |
+| Executing Avoidance | Hovering — Deciding | GCS Control Interface |
 |:-:|:-:|:-:|
-| ![Control](docs/control_tab.png) | ![Depth](docs/depth_map.png) | ![Mission](docs/mission_tab.png) |
+| ![Avoidance](docs/vlm_based_drone_01.png) | ![Hovering](docs/vlm_based_drone_02.png) | ![Control](docs/gcs_control.png) |
 
-> Place your screenshots in `docs/` and update the image paths above.
+*Left: Drone actively executing an avoidance maneuver with RGB feed and depth map. Center: VLM hovering while GPT-4o decides the next action. Right: Full GCS showing collision warning, directional controls, and live telemetry.*
 
 ---
 
